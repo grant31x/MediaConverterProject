@@ -57,7 +57,7 @@ class MediaConverterUI(tk.Tk):
         super().__init__()
         self.configure(bg="#020617")  # Dark navy background
         self.title("Media Converter UI")
-        self.geometry("900x600")
+        self.geometry("900x700")
 
         # Visual styling
         style = ttk.Style(self)
@@ -78,6 +78,9 @@ class MediaConverterUI(tk.Tk):
         style.map("Primary.TButton",
                   background=[("active", "#2563eb")])
 
+        # Checkbutton style for dark background
+        style.configure("Dark.TCheckbutton", background="#020617", foreground="#e5e7eb")
+
         # Checkbox / other controls will inherit frame background
 
         # App title
@@ -93,7 +96,7 @@ class MediaConverterUI(tk.Tk):
         self.input_var = tk.StringVar(value=str(config.INPUT_DIR))
         self.input_entry = ttk.Entry(top_frame, textvariable=self.input_var, width=60)
         self.input_entry.grid(row=0, column=1, padx=5)
-        ttk.Button(top_frame, text="Browse", command=self.browse_input).grid(
+        ttk.Button(top_frame, text="Browse", command=self.browse_input, style="Primary.TButton").grid(
             row=0, column=2, padx=5
         )
 
@@ -102,7 +105,7 @@ class MediaConverterUI(tk.Tk):
         self.output_var = tk.StringVar(value=str(config.OUTPUT_DIR))
         self.output_entry = ttk.Entry(top_frame, textvariable=self.output_var, width=60)
         self.output_entry.grid(row=1, column=1, padx=5)
-        ttk.Button(top_frame, text="Browse", command=self.browse_output).grid(
+        ttk.Button(top_frame, text="Browse", command=self.browse_output, style="Primary.TButton").grid(
             row=1, column=2, padx=5
         )
 
@@ -143,7 +146,7 @@ class MediaConverterUI(tk.Tk):
 
         # Details panel
         details_frame = ttk.Frame(middle_frame, style="Main.TFrame")
-        details_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        details_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False)
 
         ttk.Label(details_frame, text="Subtitle tracks", style="Accent.TLabel").pack(anchor="w")
         self.sub_text = tk.Text(
@@ -169,34 +172,39 @@ class MediaConverterUI(tk.Tk):
         self.skip_audio_var = tk.BooleanVar(value=False)
         self.no_discord_var = tk.BooleanVar(value=False)
 
-        ttk.Checkbutton(flags_frame, text="Dry run only", variable=self.dry_run_var).grid(
+        ttk.Checkbutton(flags_frame, text="Dry run only", variable=self.dry_run_var, style="Dark.TCheckbutton").grid(
             row=0, column=0, sticky="w", padx=5, pady=2
         )
         ttk.Checkbutton(
             flags_frame,
             text="Output next to source (ignore output directory)",
             variable=self.same_dir_var,
+            style="Dark.TCheckbutton",
         ).grid(row=0, column=1, sticky="w", padx=5, pady=2)
         ttk.Checkbutton(
             flags_frame,
             text="Delete original after conversion",
             variable=self.delete_orig_var,
+            style="Dark.TCheckbutton",
         ).grid(row=0, column=2, sticky="w", padx=5, pady=2)
 
         ttk.Checkbutton(
             flags_frame,
             text="High quality mode for 4K",
             variable=self.high_4k_var,
+            style="Dark.TCheckbutton",
         ).grid(row=1, column=0, sticky="w", padx=5, pady=2)
         ttk.Checkbutton(
             flags_frame,
             text="Skip audio validation",
             variable=self.skip_audio_var,
+            style="Dark.TCheckbutton",
         ).grid(row=1, column=1, sticky="w", padx=5, pady=2)
         ttk.Checkbutton(
             flags_frame,
             text="Disable Discord for this run",
             variable=self.no_discord_var,
+            style="Dark.TCheckbutton",
         ).grid(row=1, column=2, sticky="w", padx=5, pady=2)
 
     def browse_input(self):
@@ -232,9 +240,10 @@ class MediaConverterUI(tk.Tk):
 
         self.file_listbox.delete(0, tk.END)
         for item in self.plan:
-            label = item["name"]
-            if not item["needs_conversion"]:
-                label += "  [skip]"
+            path = Path(item["path"])
+            ext = path.suffix.lower() or "unknown"
+            status = "convert" if item["needs_conversion"] else "skip"
+            label = f"{item['name']}  | {ext}  | {status}"
             self.file_listbox.insert(tk.END, label)
 
         self.sub_text.delete("1.0", tk.END)
