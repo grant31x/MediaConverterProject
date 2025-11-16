@@ -55,19 +55,41 @@ class UIArgs:
 class MediaConverterUI(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.configure(bg="#020617")  # Dark navy background
         self.title("Media Converter UI")
         self.geometry("900x600")
 
-        # State
-        self.plan = []
-        self.selected_file: Optional[Path] = None
+        # Visual styling
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+
+        # Base frame and label styles
+        style.configure("Main.TFrame", background="#020617")
+        style.configure("Section.TLabelframe", background="#020617", foreground="#e5e7eb", borderwidth=1)
+        style.configure("Section.TLabelframe.Label", background="#020617", foreground="#60a5fa")
+        style.configure("Title.TLabel", background="#020617", foreground="#60a5fa", font=("Segoe UI", 16, "bold"))
+        style.configure("Accent.TLabel", background="#020617", foreground="#e5e7eb")
+
+        # Button style
+        style.configure("Primary.TButton", background="#1d4ed8", foreground="#e5e7eb")
+        style.map("Primary.TButton",
+                  background=[("active", "#2563eb")])
+
+        # Checkbox / other controls will inherit frame background
+
+        # App title
+        title_label = ttk.Label(self, text="Media Converter", style="Title.TLabel")
+        title_label.pack(side=tk.TOP, anchor="w", padx=10, pady=(10, 0))
 
         # Top frame for directory selection
-        top_frame = ttk.Frame(self)
+        top_frame = ttk.Frame(self, style="Main.TFrame")
         top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
 
         # Input directory
-        ttk.Label(top_frame, text="Input directory").grid(row=0, column=0, sticky="w")
+        ttk.Label(top_frame, text="Input directory", style="Accent.TLabel").grid(row=0, column=0, sticky="w")
         self.input_var = tk.StringVar(value=str(config.INPUT_DIR))
         self.input_entry = ttk.Entry(top_frame, textvariable=self.input_var, width=60)
         self.input_entry.grid(row=0, column=1, padx=5)
@@ -76,7 +98,7 @@ class MediaConverterUI(tk.Tk):
         )
 
         # Output directory
-        ttk.Label(top_frame, text="Output directory").grid(row=1, column=0, sticky="w")
+        ttk.Label(top_frame, text="Output directory", style="Accent.TLabel").grid(row=1, column=0, sticky="w")
         self.output_var = tk.StringVar(value=str(config.OUTPUT_DIR))
         self.output_entry = ttk.Entry(top_frame, textvariable=self.output_var, width=60)
         self.output_entry.grid(row=1, column=1, padx=5)
@@ -85,23 +107,33 @@ class MediaConverterUI(tk.Tk):
         )
 
         # Buttons
-        ttk.Button(top_frame, text="Scan", command=self.scan_files).grid(
+        ttk.Button(top_frame, text="Scan", command=self.scan_files, style="Primary.TButton").grid(
             row=2, column=0, pady=10, sticky="w"
         )
-        ttk.Button(top_frame, text="Run Conversion", command=self.run_conversion_clicked).grid(
+        ttk.Button(top_frame, text="Run Conversion", command=self.run_conversion_clicked, style="Primary.TButton").grid(
             row=2, column=1, pady=10, sticky="w"
         )
 
         # Middle frame for list and details
-        middle_frame = ttk.Frame(self)
+        middle_frame = ttk.Frame(self, style="Main.TFrame")
         middle_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         # File list
-        list_frame = ttk.Frame(middle_frame)
+        list_frame = ttk.Frame(middle_frame, style="Main.TFrame")
         list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        ttk.Label(list_frame, text="Files").pack(anchor="w")
-        self.file_listbox = tk.Listbox(list_frame, height=20)
+        ttk.Label(list_frame, text="Files", style="Accent.TLabel").pack(anchor="w")
+        self.file_listbox = tk.Listbox(
+            list_frame,
+            height=20,
+            bg="#020617",
+            fg="#e5e7eb",
+            selectbackground="#1d4ed8",
+            selectforeground="#e5e7eb",
+            highlightthickness=0,
+            borderwidth=1,
+            relief="solid",
+        )
         self.file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.file_listbox.bind("<<ListboxSelect>>", self.on_file_selected)
 
@@ -110,15 +142,24 @@ class MediaConverterUI(tk.Tk):
         self.file_listbox.config(yscrollcommand=scrollbar.set)
 
         # Details panel
-        details_frame = ttk.Frame(middle_frame)
+        details_frame = ttk.Frame(middle_frame, style="Main.TFrame")
         details_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        ttk.Label(details_frame, text="Subtitle tracks").pack(anchor="w")
-        self.sub_text = tk.Text(details_frame, height=15, wrap="word")
+        ttk.Label(details_frame, text="Subtitle tracks", style="Accent.TLabel").pack(anchor="w")
+        self.sub_text = tk.Text(
+            details_frame,
+            height=15,
+            wrap="word",
+            bg="#020617",
+            fg="#e5e7eb",
+            insertbackground="#e5e7eb",
+            borderwidth=1,
+            relief="solid",
+        )
         self.sub_text.pack(fill=tk.BOTH, expand=True)
 
         # Behavior flags
-        flags_frame = ttk.LabelFrame(self, text="Options")
+        flags_frame = ttk.LabelFrame(self, text="Options", style="Section.TLabelframe")
         flags_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
         self.dry_run_var = tk.BooleanVar(value=False)
