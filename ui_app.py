@@ -8,7 +8,7 @@ Features:
 - Scan for videos and show a table of files.
 - Show file type, planned status (convert or skip), and audio summary per file.
 - Button to view subtitles for the selected file.
-- Toggle behavior flags.
+- Toggle behavior flags (in a settings dialog).
 - Run conversion using main.run(...) in a background thread.
 - Status panel with log and progress.
 - Color coded badges in the Status column.
@@ -38,6 +38,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QStackedWidget,
     QProgressBar,
+    QDialog,
+    QDialogButtonBox,
 )
 from PyQt6.QtCore import QObject, pyqtSignal, QSettings, Qt
 from PyQt6.QtGui import QColor  # Added for custom table cell colors
@@ -143,12 +145,78 @@ def get_audio_summary(path: Path) -> str:
         return "unknown"
 
 
+class SettingsDialog(QDialog):
+    """
+    A dialog window to hold all conversion settings.
+    """
+    def __init__(self, current_settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(400)
+
+        # Main layout
+        layout = QVBoxLayout(self)
+
+        # Create checkboxes
+        self.cb_dry_run = QCheckBox("Dry run only (scan but do not convert)")
+        self.cb_same_dir = QCheckBox("Output next to source file (ignores Destination Directory)")
+        self.cb_delete_original = QCheckBox("Delete original after successful conversion")
+        self.cb_high_4k = QCheckBox("Enable high quality mode for 4K sources")
+        self.cb_skip_audio = QCheckBox("Skip audio validation (faster, but risky)")
+        self.cb_no_discord = QCheckBox("Disable Discord notifications for this run")
+
+        # Set initial states from current settings
+        self.cb_dry_run.setChecked(current_settings.get("dry_run", False))
+        self.cb_same_dir.setChecked(current_settings.get("same_dir", False))
+        self.cb_delete_original.setChecked(current_settings.get("delete_original", False))
+        self.cb_high_4k.setChecked(current_settings.get("high_4k", False))
+        self.cb_skip_audio.setChecked(current_settings.get("skip_audio", False))
+        self.cb_no_discord.setChecked(current_settings.get("no_discord", False))
+
+        # Add checkboxes to layout
+        layout.addWidget(self.cb_dry_run)
+        layout.addWidget(self.cb_same_dir)
+        layout.addWidget(self.cb_delete_original)
+        layout.addWidget(self.cb_high_4k)
+        layout.addWidget(self.cb_skip_audio)
+        layout.addWidget(self.cb_no_discord)
+
+        # OK and Cancel buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def get_settings(self) -> Dict[str, bool]:
+        """
+        Return the current state of all checkboxes as a dictionary.
+        """
+        return {
+            "dry_run": self.cb_dry_run.isChecked(),
+            "same_dir": self.cb_same_dir.isChecked(),
+            "delete_original": self.cb_delete_original.isChecked(),
+            "high_4k": self.cb_high_4k.isChecked(),
+            "skip_audio": self.cb_skip_audio.isChecked(),
+            "no_discord": self.cb_no_discord.isChecked(),
+        }
+
+
 class MediaConverterWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
         self.settings = QSettings("GSteeze", "MediaConverter")
         self.plan: List[Dict[str, Any]] = []
+
+        # --- Settings ---
+        # Initialize settings variables, loading from config where appropriate
+        self.setting_dry_run = False
+        self.setting_same_dir = config.SAME_DIR_OUTPUT
+        self.setting_delete_original = config.DELETE_ORIGINAL_AFTER_CONVERT
+        self.setting_high_4k = getattr(config, "HIGH_QUALITY_FOR_4K", False)
+        self.setting_skip_audio = False
+        self.setting_no_discord = False
+        # --- End Settings ---
 
         self.setWindowTitle("Media Converter")
         self.resize(1100, 750)
@@ -252,6 +320,11 @@ class MediaConverterWindow(QMainWindow):
         header_layout.addWidget(title_block)
         header_layout.addStretch()
 
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setStyleSheet("background-color: #334155; padding: 8px 14px;") # A more subtle button color
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+        header_layout.addWidget(self.settings_button)
+
         self.scan_button_header = QPushButton("+ Scan Folder")
         self.scan_button_header.clicked.connect(self.scan_from_header)
         header_layout.addWidget(self.scan_button_header)
@@ -266,7 +339,7 @@ class MediaConverterWindow(QMainWindow):
 
         # Input row.
         input_row = QHBoxLayout()
-        input_label = QLabel("Input directory")
+        input_label = QLabel("Scan Directory")
         self.input_edit = QLineEdit(str(config.INPUT_DIR))
         input_browse = QPushButton("Browse")
         input_browse.clicked.connect(self.browse_input)
@@ -277,7 +350,7 @@ class MediaConverterWindow(QMainWindow):
 
         # Output row.
         output_row = QHBoxLayout()
-        output_label = QLabel("Output directory")
+        output_label = QLabel("Destination Directory")
         self.output_edit = QLineEdit(str(config.OUTPUT_DIR))
         output_browse = QPushButton("Browse")
         output_browse.clicked.connect(self.browse_output)
@@ -417,38 +490,9 @@ class MediaConverterWindow(QMainWindow):
         self.subtitles_button.clicked.connect(self.show_subtitles_clicked)
         details_layout.addWidget(self.subtitles_button)
 
-        # Options section.
-        options_group = QGroupBox("Options")
-        layout.addWidget(options_group)
-        options_layout = QVBoxLayout()
-        options_group.setLayout(options_layout)
-
-        row1 = QHBoxLayout()
-        row2 = QHBoxLayout()
-
-        self.cb_dry_run = QCheckBox("Dry run only")
-        self.cb_same_dir = QCheckBox("Output next to source directory")
-        self.cb_same_dir.setChecked(config.SAME_DIR_OUTPUT)
-        self.cb_delete_original = QCheckBox("Delete original after conversion")
-        self.cb_delete_original.setChecked(config.DELETE_ORIGINAL_AFTER_CONVERT)
-
-        row1.addWidget(self.cb_dry_run)
-        row1.addWidget(self.cb_same_dir)
-        row1.addWidget(self.cb_delete_original)
-        row1.addStretch()
-
-        self.cb_high_4k = QCheckBox("High quality mode for 4K")
-        self.cb_high_4k.setChecked(getattr(config, "HIGH_QUALITY_FOR_4K", False))
-        self.cb_skip_audio = QCheckBox("Skip audio validation")
-        self.cb_no_discord = QCheckBox("Disable Discord for this run")
-
-        row2.addWidget(self.cb_high_4k)
-        row2.addWidget(self.cb_skip_audio)
-        row2.addWidget(self.cb_no_discord)
-        row2.addStretch()
-
-        options_layout.addLayout(row1)
-        options_layout.addLayout(row2)
+        # Options section (REMOVED)
+        # The options_group QGroupBox has been removed from here
+        # and its functionality moved to the SettingsDialog.
 
         return page
 
@@ -520,6 +564,37 @@ class MediaConverterWindow(QMainWindow):
     def scan_from_header(self):
         """Header button for Scan Folder, uses same logic as Scan."""
         self.scan_files()
+
+    # --- New method to open settings dialog ---
+    def open_settings_dialog(self):
+        """
+        Open the settings dialog and update instance settings if "OK" is clicked.
+        """
+        current_settings = {
+            "dry_run": self.setting_dry_run,
+            "same_dir": self.setting_same_dir,
+            "delete_original": self.setting_delete_original,
+            "high_4k": self.setting_high_4k,
+            "skip_audio": self.setting_skip_audio,
+            "no_discord": self.setting_no_discord,
+        }
+
+        dialog = SettingsDialog(current_settings, self)
+        
+        # Apply the same stylesheet to the dialog
+        dialog.setStyleSheet(self.styleSheet())
+
+        if dialog.exec():
+            new_settings = dialog.get_settings()
+            self.setting_dry_run = new_settings["dry_run"]
+            self.setting_same_dir = new_settings["same_dir"]
+            self.setting_delete_original = new_settings["delete_original"]
+            self.setting_high_4k = new_settings["high_4k"]
+            self.setting_skip_audio = new_settings["skip_audio"]
+            self.setting_no_discord = new_settings["no_discord"]
+            self.log_message("Settings updated.")
+        else:
+            self.log_message("Settings dialog cancelled.")
 
     # Scanning and table population.
 
@@ -676,16 +751,17 @@ class MediaConverterWindow(QMainWindow):
             QMessageBox.critical(self, "Error", "Input directory is required.")
             return
 
+        # Read settings from instance variables
         args = UIArgs(
             input_dir=input_dir,
             output_dir=output_dir,
-            dry_run=self.cb_dry_run.isChecked(),
-            same_dir_output=self.cb_same_dir.isChecked(),
-            delete_original=self.cb_delete_original.isChecked(),
+            dry_run=self.setting_dry_run,
+            same_dir_output=self.setting_same_dir,
+            delete_original=self.setting_delete_original,
             max_retries=None,
-            high_quality_4k=self.cb_high_4k.isChecked(),
-            skip_audio_validation=self.cb_skip_audio.isChecked(),
-            no_discord=self.cb_no_discord.isChecked(),
+            high_quality_4k=self.setting_high_4k,
+            skip_audio_validation=self.setting_skip_audio,
+            no_discord=self.setting_no_discord,
         )
 
         worker = ConversionWorker(args)
