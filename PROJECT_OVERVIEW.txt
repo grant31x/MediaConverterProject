@@ -1,0 +1,187 @@
+Media Converter Project — Script Overview
+========================================
+
+Core entry points
+=================
+
+1) ui_app.py   (PRIMARY UI ENTRY POINT)
+   - Clickable Tkinter app.
+   - Lets you browse for input and output directories.
+   - Scan button to list files found in the library.
+   - Shows subtitle tracks for the selected file.
+   - Options for dry run, output next to source, delete original, high quality 4k, skip audio validation, disable Discord.
+   - Runs the full conversion engine in a background thread.
+   - Command to start the UI:
+       python ui_app.py
+
+2) main.py   (CLI ENGINE)
+   - Orchestrates scanning, conversion, reporting, and notifications.
+   - Consumes settings from config.py and command line flags.
+   - Supports:
+       --input / --output       override input and output directories
+       --dry-run                show what would be converted, no ffmpeg
+       --same-dir-output        write mp4 next to the source file
+       --delete-original        remove source if conversion succeeds
+       --max-retries N          override retry count
+       --high-quality-4k        enable high quality path for 4k
+       --skip-audio-validation  skip audio validation step
+       --no-discord             disable Discord notifications
+       --plan                   show a conversion plan and exit
+   - Normal run example:
+       python main.py --input "/path/to/input" --output "/path/to/output"
+   - Plan only example:
+       python main.py --plan --input "/path/to/input"
+
+Configuration and helpers
+=========================
+
+3) config.py
+   - Central configuration for the project.
+   - Defines:
+       BASE_DIR, INPUT_DIR, OUTPUT_DIR
+       platform detection (macOS vs Windows)
+       FFMPEG_BINARY and FFPROBE_BINARY
+       VIDEO_EXTENSIONS and profiles
+       retry settings and behavior flags
+       SAME_DIR_OUTPUT and DELETE_ORIGINAL_AFTER_CONVERT
+       subtitle flags (KEEP_SUBTITLES, BURN_IN_SUBTITLES, AUTO_FORCED_SUBTITLES)
+       Discord settings (WEBHOOK_ENABLED, WEBHOOK_URL, DISCORD_EMBED_COLOR)
+   - Reads the Discord webhook from environment variable MEDIA_CONVERTER_WEBHOOK_URL.
+   - ensure_directories() creates any needed folders at startup.
+
+4) utils.py
+   - Shared helper functions used across the project.
+   - log()    simple timestamped logging to console.
+   - safe_run() wraps subprocess calls and returns (success, stdout, stderr).
+   - ensure_mp4_suffix() normalizes output file suffix to .mp4.
+   - format_duration() and human_size() provide human readable duration and size strings.
+
+Scanning and planning
+=====================
+
+5) scanner.py
+   - Discovers video files under INPUT_DIR.
+   - scan_for_videos():
+       walks the directory tree and returns a list of Path objects whose extensions match VIDEO_EXTENSIONS.
+   - needs_conversion(path):
+       decides if a file should be processed based on:
+         extension in VIDEO_EXTENSIONS
+         whether the cleaned mp4 output already exists
+   - list_subtitle_streams(path):
+       uses ffprobe to inspect subtitle streams and returns index, codec, language, and title for each.
+
+6) ui_backend.py
+   - Backend logic for the UI and planning tools.
+   - list_all_videos():
+       simple wrapper around scan_for_videos().
+   - describe_file(path):
+       returns a structured dict for one file including subtitle streams.
+   - preview_subtitles(path):
+       returns subtitle metadata for a file.
+   - prepare_conversion_plan():
+       builds a list of files with:
+         name, path, needs_conversion flag, subtitle_streams
+       used by both main.py (--plan) and ui_app.py.
+
+Conversion and naming
+=====================
+
+7) converters.py
+   - Core ffmpeg integration and conversion logic.
+   - sanitize_output_name(path):
+       decides final output path:
+         uses SAME_DIR_OUTPUT to choose folder
+         calls renamer.clean_name() to build a cleaned base name
+         always ends with .mp4
+   - convert_video(path, index=None, total=None):
+       high level conversion routine:
+         builds ffmpeg command
+         runs safe_run()
+         validates audio if enabled
+         applies retry logic if enabled
+         logs and returns success or failure.
+   - build_copy_command() and build_encode_command():
+       build the actual ffmpeg command line arguments for copy or re-encode.
+   - Uses config flags for:
+       overwrite behavior
+       retries and failure handling
+       audio validation
+       subtitle keep or burn in behavior
+       high quality path for 4k sources.
+
+8) renamer.py
+   - Handles cleaning and normalizing file names.
+   - clean_name(path):
+       uses RENAME_PATTERNS from config.py to remove noise tokens such as:
+         1080p, 2160p, x265, H265, release tags, group names.
+       collapses repeated spaces.
+       returns a safe base name used for output .mp4 files.
+
+Reporting and notifications
+===========================
+
+9) reporting.py
+   - Tracks statistics for a conversion run.
+   - Report class fields:
+       total_files, converted, skipped, failed
+       failed_files list
+       audio_failures count and audio_failed_files list
+       retry_failures count
+       mode (NORMAL or DRY_RUN)
+       start_time and end_time.
+   - add_failure(), add_audio_failure(), add_retry_failure(), mark_dry_run().
+   - summary_text():
+       returns a human readable report string.
+   - save_to_file():
+       writes summary to summary.txt in the output folder.
+   - to_summary_dict():
+       returns a dict version of the summary used by notifications.py.
+
+10) notifications.py
+    - Sends Discord notifications about job completion.
+    - Uses WEBHOOK_URL and WEBHOOK_ENABLED from config.py.
+    - check_webhook_connectivity():
+        quick HEAD request to verify webhook is reachable.
+    - send_discord_message(content):
+        simple text based notification.
+    - send_summary_embed(report):
+        rich embed summary using:
+          totals from report.to_summary_dict()
+          DISCORD_EMBED_COLOR
+        includes:
+          mode, total, converted, skipped, failures
+          audio and retry failures when present
+          truncated list of failed files.
+
+How to use this project
+=======================
+
+On macOS or Windows (inside this project folder):
+
+1) Launch the clickable UI (recommended for normal use):
+
+   python ui_app.py
+
+2) Run a plan only analysis from the terminal:
+
+   python main.py --plan --input "/path/to/your/library"
+
+3) Run a dry run batch from the terminal:
+
+   python main.py --dry-run --input "/path/to/your/library" --output "/path/to/output"
+
+4) Run a real conversion batch from the terminal:
+
+   python main.py --input "/path/to/your/library" --output "/path/to/output"
+
+Notes
+=====
+
+- ffmpeg and ffprobe must be installed and paths configured correctly in config.py
+  or via environment variables FFMPEG_BINARY and FFPROBE_BINARY.
+- Discord notifications are optional. To enable them set:
+    MEDIA_CONVERTER_WEBHOOK_URL
+  in your environment and ensure WEBHOOK_ENABLED is true in config.py.
+- SAME_DIR_OUTPUT and DELETE_ORIGINAL_AFTER_CONVERT are powerful options.
+  Use with care when working on your main media library.
+
