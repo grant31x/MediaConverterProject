@@ -32,8 +32,9 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QCheckBox,
     QMessageBox,
+    QProgressBar,
 )
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, QSettings, Qt
 
 import config
 import main
@@ -139,6 +140,7 @@ def get_audio_summary(path: Path) -> str:
 class MediaConverterWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.settings = QSettings("GSteeze", "MediaConverter")
 
         self.plan: List[Dict[str, Any]] = []
 
@@ -266,7 +268,14 @@ class MediaConverterWindow(QMainWindow):
         self.files_table.setSelectionBehavior(self.files_table.SelectionBehavior.SelectRows)
         self.files_table.setSelectionMode(self.files_table.SelectionMode.SingleSelection)
         self.files_table.cellClicked.connect(self.on_file_row_selected)
-        self.files_table.horizontalHeader().setStretchLastSection(True)
+        header = self.files_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionsMovable(True)
+        header.setHighlightSections(False)
+        # Restore saved column widths if available
+        self.restore_table_settings()
+        # Save column widths when resized
+        header.sectionResized.connect(self.on_column_resized)
         files_layout.addWidget(self.files_table)
 
         details_group = QGroupBox("Details")
@@ -315,6 +324,55 @@ class MediaConverterWindow(QMainWindow):
         options_layout.addLayout(row1)
         options_layout.addLayout(row2)
 
+        # Status and log panel
+        status_group = QGroupBox("Status")
+        root_layout.addWidget(status_group)
+        status_layout = QVBoxLayout()
+        status_group.setLayout(status_layout)
+
+        self.status_label = QLabel("Ready")
+        status_layout.addWidget(self.status_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        status_layout.addWidget(self.progress_bar)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setFixedHeight(120)
+        status_layout.addWidget(self.log_text)
+
+    # UI helpers
+
+    def log_message(self, message: str):
+        """Append a line to the log panel and update status label."""
+        if not hasattr(self, "log_text"):
+            return
+        self.log_text.append(message)
+        self.status_label.setText(message)
+
+    def restore_table_settings(self):
+        """Restore column widths from QSettings if present."""
+        widths = self.settings.value("files_table/column_widths")
+        if not widths:
+            return
+        try:
+            widths = [int(w) for w in widths]
+        except Exception:
+            return
+        header = self.files_table.horizontalHeader()
+        for idx, w in enumerate(widths):
+            if idx < self.files_table.columnCount():
+                header.resizeSection(idx, w)
+
+    def on_column_resized(self, index: int, old_size: int, new_size: int):
+        """Persist column widths on resize."""
+        header = self.files_table.horizontalHeader()
+        widths = [header.sectionSize(i) for i in range(self.files_table.columnCount())]
+        self.settings.setValue("files_table/column_widths", widths)
+
     # Path selection
 
     def browse_input(self):
@@ -339,6 +397,10 @@ class MediaConverterWindow(QMainWindow):
             QMessageBox.critical(self, "Error", "Input directory is required.")
             return
 
+        self.log_message("Scanning input directory...")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+
         config.INPUT_DIR = Path(input_dir)
         output_dir = self.output_edit.text().strip()
         if output_dir:
@@ -346,6 +408,7 @@ class MediaConverterWindow(QMainWindow):
 
         try:
             self.plan = prepare_conversion_plan()
+            self.log_message("Scan complete. Building file table...")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Scan failed: {e}")
             return
@@ -355,18 +418,34 @@ class MediaConverterWindow(QMainWindow):
         for idx, item in enumerate(self.plan):
             path = Path(item["path"])
             ext = path.suffix.lower() or "unknown"
-            status = "convert" if item["needs_conversion"] else "skip"
             audio_summary = get_audio_summary(path)
 
             self.files_table.insertRow(idx)
             self.files_table.setItem(idx, 0, QTableWidgetItem(item["name"]))
             self.files_table.setItem(idx, 1, QTableWidgetItem(ext))
-            self.files_table.setItem(idx, 2, QTableWidgetItem(status))
-            self.files_table.setItem(idx, 3, QTableWidgetItem(audio_summary))
 
+            status_item = QTableWidgetItem("CONVERT" if item["needs_conversion"] else "SKIP")
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            audio_item = QTableWidgetItem(audio_summary)
+
+            if item["needs_conversion"]:
+                # Blue tinted background for items that will be converted
+                status_item.setBackground(Qt.GlobalColor.darkBlue)
+                status_item.setForeground(Qt.GlobalColor.white)
+            else:
+                # Dimmer look for items that will be skipped
+                status_item.setBackground(Qt.GlobalColor.darkGray)
+                status_item.setForeground(Qt.GlobalColor.white)
+
+            self.files_table.setItem(idx, 2, status_item)
+            self.files_table.setItem(idx, 3, audio_item)
+
+        total = len(self.plan)
         self.details_text.setPlainText(
             "Scan complete. Select a row and click the subtitles button to view subtitle tracks."
         )
+        self.progress_bar.setValue(100 if total > 0 else 0)
+        self.log_message(f"Scan complete. {total} files found.")
 
     def on_file_row_selected(self, row: int, column: int):
         # When a row is clicked, show basic details.
@@ -440,6 +519,10 @@ class MediaConverterWindow(QMainWindow):
             QMessageBox.critical(self, "Error", "Input directory is required.")
             return
 
+        self.log_message("Starting conversion run...")
+        # Use indeterminate progress while backend runs
+        self.progress_bar.setRange(0, 0)
+
         args = UIArgs(
             input_dir=input_dir,
             output_dir=output_dir,
@@ -466,10 +549,24 @@ class MediaConverterWindow(QMainWindow):
         )
 
     def on_conversion_finished(self, message: str):
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.log_message(message)
         QMessageBox.information(self, "Done", message)
 
     def on_conversion_error(self, message: str):
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.log_message(f"Conversion failed: {message}")
         QMessageBox.critical(self, "Error", f"Conversion failed: {message}")
+
+
+    def closeEvent(self, event):
+        """Ensure column widths are persisted on close."""
+        header = self.files_table.horizontalHeader()
+        widths = [header.sectionSize(i) for i in range(self.files_table.columnCount())]
+        self.settings.setValue("files_table/column_widths", widths)
+        super().closeEvent(event)
 
 
 def main_qt():
