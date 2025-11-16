@@ -1,5 +1,3 @@
-
-
 """
 ui_app.py
 PyQt6 based UI for the Media Converter project.
@@ -42,6 +40,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
 )
 from PyQt6.QtCore import QObject, pyqtSignal, QSettings, Qt
+from PyQt6.QtGui import QColor  # Added for custom table cell colors
 
 import config
 import main
@@ -158,65 +157,65 @@ class MediaConverterWindow(QMainWindow):
         self.setStyleSheet(
             """
         QMainWindow {
-            background-color: #020617;
+            background-color: #0f172a;
         }
         QWidget {
-            background-color: #020617;
+            background-color: #0f172a;
             color: #e5e7eb;
             font-family: "Segoe UI", system-ui, -apple-system;
             font-size: 10pt;
         }
         QGroupBox {
-            border: 1px solid #1f2937;
+            border: 1px solid #334155;
             margin-top: 6px;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
             left: 8px;
             padding: 0 4px;
-            color: #60a5fa;
+            color: #3b82f6;
         }
         QLabel {
             color: #e5e7eb;
         }
         QLineEdit {
-            background-color: #020617;
+            background-color: #0f172a;
             color: #e5e7eb;
-            border: 1px solid #4b5563;
+            border: 1px solid #475569;
             padding: 4px;
         }
         QPushButton {
-            background-color: #0891b2;
+            background-color: #2563eb;
             color: #e5e7eb;
             border-radius: 6px;
             padding: 8px 14px;
         }
         QPushButton:hover {
-            background-color: #06b6d4;
+            background-color: #3b82f6;
         }
         QTableWidget {
-            background-color: #020617;
+            background-color: #0f172a;
             color: #e5e7eb;
-            gridline-color: #1f2937;
-            border: 1px solid #4b5563;
+            gridline-color: #334155;
+            border: 1px solid #475569;
         }
         QHeaderView::section {
-            background-color: #020617;
+            background-color: #0f172a;
             color: #e5e7eb;
-            border: 1px solid #1f2937;
+            border: 1px solid #334155;
             padding: 4px;
         }
         QTextEdit {
-            background-color: #020617;
+            background-color: #0f172a;
             color: #e5e7eb;
-            border: 1px solid #4b5563;
+            border: 1px solid #475569;
         }
         QCheckBox {
             color: #e5e7eb;
         }
         QProgressBar {
-            border: 1px solid #1f2937;
-            background-color: #020617;
+            border: 1px solid #334155;
+            background-color: #0f172a;
             color: #e5e7eb;
         }
         QProgressBar::chunk {
@@ -244,7 +243,7 @@ class MediaConverterWindow(QMainWindow):
         title_layout.setContentsMargins(8, 0, 0, 0)
 
         title_label = QLabel("Library Scanner")
-        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #38bdf8;")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #3b82f6;")
         subtitle_label = QLabel("Scan and manage your video library")
         subtitle_label.setStyleSheet("font-size: 11px; color: #9ca3af;")
         title_layout.addWidget(title_label)
@@ -349,7 +348,7 @@ class MediaConverterWindow(QMainWindow):
         icon_box_layout = QVBoxLayout(icon_box)
         icon_box_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_box.setStyleSheet(
-            "background-color: #020617; border-radius: 24px; border: 1px solid #1f2937;"
+            "background-color: #0f172a; border-radius: 24px; border: 1px solid #334155;"
         )
         icon_label = QLabel("📁")
         icon_label.setStyleSheet("font-size: 40px;")
@@ -457,8 +456,12 @@ class MediaConverterWindow(QMainWindow):
 
     def show_empty_state(self):
         self.stack.setCurrentWidget(self.empty_page)
-        self.details_text = None
-        self.files_table = None
+        # --- BUG FIX ---
+        # The lines below were causing the crash. The widgets on the
+        # library_page are persistent and should not be set to None.
+        # self.details_text = None
+        # self.files_table = None
+        # --- END BUG FIX ---
 
     def show_library_view(self):
         self.stack.setCurrentWidget(self.library_page)
@@ -481,6 +484,10 @@ class MediaConverterWindow(QMainWindow):
             widths = [int(w) for w in widths]
         except Exception:
             return
+            
+        if not hasattr(self, "files_table") or self.files_table is None:
+            return
+
         header = self.files_table.horizontalHeader()
         for idx, w in enumerate(widths):
             if idx < self.files_table.columnCount():
@@ -488,6 +495,8 @@ class MediaConverterWindow(QMainWindow):
 
     def on_column_resized(self, index: int, old_size: int, new_size: int):
         """Persist column widths on resize."""
+        if not hasattr(self, "files_table") or self.files_table is None:
+            return
         header = self.files_table.horizontalHeader()
         widths = [header.sectionSize(i) for i in range(self.files_table.columnCount())]
         self.settings.setValue("files_table/column_widths", widths)
@@ -547,6 +556,11 @@ class MediaConverterWindow(QMainWindow):
 
         # Switch to library view now that we have a plan.
         self.ensure_library_widgets()
+        
+        # This check is now required because the bug is fixed
+        if not hasattr(self, "files_table") or self.files_table is None:
+            self.log_message("Error: Files table widget not found.")
+            return
 
         self.files_table.setRowCount(0)
 
@@ -564,20 +578,25 @@ class MediaConverterWindow(QMainWindow):
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             audio_item = QTableWidgetItem(audio_summary)
 
+            # --- STYLE FIX ---
+            # Use theme-friendly hex colors instead of hard-coded Qt.GlobalColor
+            text_color = QColor("#e5e7eb") # Match theme text
             if item["needs_conversion"]:
-                status_item.setBackground(Qt.GlobalColor.darkBlue)
-                status_item.setForeground(Qt.GlobalColor.white)
+                status_item.setBackground(QColor("#1e40af")) # blue-800
+                status_item.setForeground(text_color)
             else:
-                status_item.setBackground(Qt.GlobalColor.darkGray)
-                status_item.setForeground(Qt.GlobalColor.white)
+                status_item.setBackground(QColor("#374151")) # gray-700
+                status_item.setForeground(text_color)
+            # --- END STYLE FIX ---
 
             self.files_table.setItem(idx, 2, status_item)
             self.files_table.setItem(idx, 3, audio_item)
 
         total = len(self.plan)
-        self.details_text.setPlainText(
-            "Scan complete. Select a row and click the subtitles button to view subtitle tracks."
-        )
+        if hasattr(self, "details_text") and self.details_text is not None:
+            self.details_text.setPlainText(
+                "Scan complete. Select a row and click the subtitles button to view subtitle tracks."
+            )
         self.progress_bar.setValue(100 if total > 0 else 0)
         self.log_message(f"Scan complete. {total} files found.")
 
@@ -597,12 +616,16 @@ class MediaConverterWindow(QMainWindow):
             "",
             "Click the subtitles button to view subtitle tracks.",
         ]
-        self.details_text.setPlainText("\n".join(lines))
+        
+        if hasattr(self, "details_text") and self.details_text is not None:
+            self.details_text.setPlainText("\n".join(lines))
 
     # Subtitle viewing.
 
     def get_selected_plan_item(self) -> Optional[Dict[str, Any]]:
         if not self.plan:
+            return None
+        if not hasattr(self, "files_table") or self.files_table is None:
             return None
         current_row = self.files_table.currentRow()
         if current_row < 0 or current_row >= len(self.plan):
@@ -640,7 +663,8 @@ class MediaConverterWindow(QMainWindow):
                     line += f"  {title}"
                 lines.append(line)
 
-        self.details_text.setPlainText("\n".join(lines))
+        if hasattr(self, "details_text") and self.details_text is not None:
+            self.details_text.setPlainText("\n".join(lines))
 
     # Conversion.
 
