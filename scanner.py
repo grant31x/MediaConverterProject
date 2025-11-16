@@ -1,26 +1,28 @@
 """
 scanner.py
-Walks the input directory and identifies all video files that need conversion.
+Scans for video files and determines whether they need conversion.
+Also provides helpers for subtitle inspection.
 """
 
 from pathlib import Path
+import os
+
 import config
-from utils import log
+from converters import sanitize_output_name
+from utils import log, safe_run
 
 
 def scan_for_videos():
     """
-    Returns a list of Path objects representing all video files
-    inside config.INPUT_DIR with extensions listed in VIDEO_EXTENSIONS.
+    Scan the input directory for video files matching the configured extensions.
+    Returns a list of Path objects.
     """
-    log("Starting scan for videos...")
     videos = []
-
-    for ext in config.VIDEO_EXTENSIONS:
-        for file in config.INPUT_DIR.rglob(f"*{ext}"):
-            videos.append(file)
-
-    log(f"Scan complete. Found {len(videos)} file(s).")
+    for root, _, files in os.walk(config.INPUT_DIR):
+        for file in files:
+            path = Path(root) / file
+            if path.suffix.lower() in config.VIDEO_EXTENSIONS:
+                videos.append(path)
     return videos
 
 
@@ -28,16 +30,56 @@ def needs_conversion(path: Path):
     """
     Determine whether a file needs to be processed.
     Rules:
-      1. The file must be an m4v or other allowed extension.
-      2. If OVERWRITE_EXISTING is false and mp4 already exists, skip.
+      1. The file extension must be included in VIDEO_EXTENSIONS.
+      2. If OVERWRITE_EXISTING is false and the target mp4 already exists, skip.
     """
-    if path.suffix.lower() not in config.VIDEO_EXTENSIONS:
+    suffix = path.suffix.lower()
+    if suffix not in config.VIDEO_EXTENSIONS:
         return False
 
-    output_path = config.OUTPUT_DIR / path.with_suffix(".mp4").name
+    output_path = sanitize_output_name(path)
 
     if not config.OVERWRITE_EXISTING and output_path.exists():
-        log(f"Skipping {path.name} because output already exists.")
+        log(f"Skipping {path.name} because output already exists at {output_path}.")
         return False
 
     return True
+
+
+def list_subtitle_streams(path: Path):
+    """
+    Return a list of subtitle stream descriptions for the given file.
+    Uses ffprobe via FFPROBE_BINARY to inspect subtitle tracks.
+    This is intended for UI and burn-in selection.
+    """
+    ffprobe_bin = getattr(config, "FFPROBE_BINARY", "ffprobe")
+    cmd = [
+        ffprobe_bin,
+        "-v", "error",
+        "-select_streams", "s",
+        "-show_entries", "stream=index,codec_name,codec_type:stream_tags=language,title",
+        "-of", "json",
+        str(path),
+    ]
+    success, stdout, _ = safe_run(cmd)
+    if not success or not stdout.strip():
+        return []
+
+    try:
+        import json
+        data = json.loads(stdout)
+        streams = data.get("streams", [])
+        results = []
+        for s in streams:
+            tags = s.get("tags", {}) or {}
+            results.append(
+                {
+                    "index": s.get("index"),
+                    "codec": s.get("codec_name"),
+                    "language": tags.get("language", "und"),
+                    "title": tags.get("title", ""),
+                }
+            )
+        return results
+    except Exception:
+        return []
