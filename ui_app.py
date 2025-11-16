@@ -1,14 +1,20 @@
+
+
 """
 ui_app.py
 PyQt6 based UI for the Media Converter project.
 
 Features:
-- Select input and output directories
-- Scan for videos and show a table of files
-- Show file type, planned status (convert or skip), and audio summary per file
-- Button to view subtitles for the selected file
-- Toggle behavior flags
-- Run conversion using main.run(...) in a background thread
+- Hero style empty state before first scan.
+- Select input and output directories.
+- Scan for videos and show a table of files.
+- Show file type, planned status (convert or skip), and audio summary per file.
+- Button to view subtitles for the selected file.
+- Toggle behavior flags.
+- Run conversion using main.run(...) in a background thread.
+- Status panel with log and progress.
+- Color coded badges in the Status column.
+- Persistent column widths for the files table.
 """
 
 import sys
@@ -32,6 +38,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QCheckBox,
     QMessageBox,
+    QStackedWidget,
     QProgressBar,
 )
 from PyQt6.QtCore import QObject, pyqtSignal, QSettings, Qt
@@ -91,7 +98,7 @@ class ConversionWorker(QObject):
 def get_audio_summary(path: Path) -> str:
     """
     Use ffprobe to inspect audio streams and return a short summary string.
-    Example: "eac3 5.1 (eng), aac 2.0 (eng)"
+    Example: "eac3 5.1 (eng), aac 2.0 (eng)".
     """
     ffprobe_bin = getattr(config, "FFPROBE_BINARY", "ffprobe")
     cmd = [
@@ -140,14 +147,14 @@ def get_audio_summary(path: Path) -> str:
 class MediaConverterWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = QSettings("GSteeze", "MediaConverter")
 
+        self.settings = QSettings("GSteeze", "MediaConverter")
         self.plan: List[Dict[str, Any]] = []
 
         self.setWindowTitle("Media Converter")
-        self.resize(1000, 720)
+        self.resize(1100, 750)
 
-        # Dark theme styling
+        # Dark theme styling for the whole window.
         self.setStyleSheet(
             """
         QMainWindow {
@@ -179,13 +186,13 @@ class MediaConverterWindow(QMainWindow):
             padding: 4px;
         }
         QPushButton {
-            background-color: #1d4ed8;
+            background-color: #0891b2;
             color: #e5e7eb;
-            border-radius: 4px;
-            padding: 6px 10px;
+            border-radius: 6px;
+            padding: 8px 14px;
         }
         QPushButton:hover {
-            background-color: #2563eb;
+            background-color: #06b6d4;
         }
         QTableWidget {
             background-color: #020617;
@@ -207,6 +214,14 @@ class MediaConverterWindow(QMainWindow):
         QCheckBox {
             color: #e5e7eb;
         }
+        QProgressBar {
+            border: 1px solid #1f2937;
+            background-color: #020617;
+            color: #e5e7eb;
+        }
+        QProgressBar::chunk {
+            background-color: #22c55e;
+        }
         """
         )
 
@@ -214,13 +229,43 @@ class MediaConverterWindow(QMainWindow):
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
 
-        # Paths section
+        # Header bar.
+        header_widget = QWidget()
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Simple icon placeholder (text based).
+        icon_label = QLabel("🎬")
+        icon_label.setStyleSheet("font-size: 26px;")
+        header_layout.addWidget(icon_label)
+
+        title_block = QWidget()
+        title_layout = QVBoxLayout(title_block)
+        title_layout.setContentsMargins(8, 0, 0, 0)
+
+        title_label = QLabel("Library Scanner")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #38bdf8;")
+        subtitle_label = QLabel("Scan and manage your video library")
+        subtitle_label.setStyleSheet("font-size: 11px; color: #9ca3af;")
+        title_layout.addWidget(title_label)
+        title_layout.addWidget(subtitle_label)
+
+        header_layout.addWidget(title_block)
+        header_layout.addStretch()
+
+        self.scan_button_header = QPushButton("+ Scan Folder")
+        self.scan_button_header.clicked.connect(self.scan_from_header)
+        header_layout.addWidget(self.scan_button_header)
+
+        root_layout.addWidget(header_widget)
+
+        # Paths section (advanced controls, always visible under header).
         paths_group = QGroupBox("Paths")
         root_layout.addWidget(paths_group)
         paths_layout = QVBoxLayout()
         paths_group.setLayout(paths_layout)
 
-        # Input row
+        # Input row.
         input_row = QHBoxLayout()
         input_label = QLabel("Input directory")
         self.input_edit = QLineEdit(str(config.INPUT_DIR))
@@ -231,7 +276,7 @@ class MediaConverterWindow(QMainWindow):
         input_row.addWidget(input_browse)
         paths_layout.addLayout(input_row)
 
-        # Output row
+        # Output row.
         output_row = QHBoxLayout()
         output_label = QLabel("Output directory")
         self.output_edit = QLineEdit(str(config.OUTPUT_DIR))
@@ -242,7 +287,7 @@ class MediaConverterWindow(QMainWindow):
         output_row.addWidget(output_browse)
         paths_layout.addLayout(output_row)
 
-        # Action buttons row
+        # Secondary actions row (Scan and Run) under paths for power users.
         actions_row = QHBoxLayout()
         self.scan_button = QPushButton("Scan")
         self.scan_button.clicked.connect(self.scan_files)
@@ -253,78 +298,19 @@ class MediaConverterWindow(QMainWindow):
         actions_row.addStretch()
         paths_layout.addLayout(actions_row)
 
-        # Middle area: files table and details
-        middle_layout = QHBoxLayout()
-        root_layout.addLayout(middle_layout)
+        # Stacked widget for hero empty state vs library view.
+        self.stack = QStackedWidget()
+        root_layout.addWidget(self.stack, 1)
 
-        files_group = QGroupBox("Files")
-        middle_layout.addWidget(files_group, 3)
-        files_layout = QVBoxLayout()
-        files_group.setLayout(files_layout)
+        # Page 0: hero empty state.
+        self.empty_page = self._build_empty_page()
+        self.stack.addWidget(self.empty_page)
 
-        self.files_table = QTableWidget()
-        self.files_table.setColumnCount(4)
-        self.files_table.setHorizontalHeaderLabels(["Name", "Type", "Status", "Audio"])
-        self.files_table.setSelectionBehavior(self.files_table.SelectionBehavior.SelectRows)
-        self.files_table.setSelectionMode(self.files_table.SelectionMode.SingleSelection)
-        self.files_table.cellClicked.connect(self.on_file_row_selected)
-        header = self.files_table.horizontalHeader()
-        header.setStretchLastSection(True)
-        header.setSectionsMovable(True)
-        header.setHighlightSections(False)
-        # Restore saved column widths if available
-        self.restore_table_settings()
-        # Save column widths when resized
-        header.sectionResized.connect(self.on_column_resized)
-        files_layout.addWidget(self.files_table)
+        # Page 1: library view (table, details, options).
+        self.library_page = self._build_library_page()
+        self.stack.addWidget(self.library_page)
 
-        details_group = QGroupBox("Details")
-        middle_layout.addWidget(details_group, 2)
-        details_layout = QVBoxLayout()
-        details_group.setLayout(details_layout)
-
-        self.details_text = QTextEdit()
-        self.details_text.setReadOnly(True)
-        details_layout.addWidget(self.details_text)
-
-        self.subtitles_button = QPushButton("Show subtitles for selected file")
-        self.subtitles_button.clicked.connect(self.show_subtitles_clicked)
-        details_layout.addWidget(self.subtitles_button)
-
-        # Options section
-        options_group = QGroupBox("Options")
-        root_layout.addWidget(options_group)
-        options_layout = QVBoxLayout()
-        options_group.setLayout(options_layout)
-
-        row1 = QHBoxLayout()
-        row2 = QHBoxLayout()
-
-        self.cb_dry_run = QCheckBox("Dry run only")
-        self.cb_same_dir = QCheckBox("Output next to source (ignore output directory)")
-        self.cb_same_dir.setChecked(config.SAME_DIR_OUTPUT)
-        self.cb_delete_original = QCheckBox("Delete original after conversion")
-        self.cb_delete_original.setChecked(config.DELETE_ORIGINAL_AFTER_CONVERT)
-
-        row1.addWidget(self.cb_dry_run)
-        row1.addWidget(self.cb_same_dir)
-        row1.addWidget(self.cb_delete_original)
-        row1.addStretch()
-
-        self.cb_high_4k = QCheckBox("High quality mode for 4K")
-        self.cb_high_4k.setChecked(config.HIGH_QUALITY_FOR_4K)
-        self.cb_skip_audio = QCheckBox("Skip audio validation")
-        self.cb_no_discord = QCheckBox("Disable Discord for this run")
-
-        row2.addWidget(self.cb_high_4k)
-        row2.addWidget(self.cb_skip_audio)
-        row2.addWidget(self.cb_no_discord)
-        row2.addStretch()
-
-        options_layout.addLayout(row1)
-        options_layout.addLayout(row2)
-
-        # Status and log panel
+        # Status and log panel (always visible).
         status_group = QGroupBox("Status")
         root_layout.addWidget(status_group)
         status_layout = QVBoxLayout()
@@ -344,14 +330,147 @@ class MediaConverterWindow(QMainWindow):
         self.log_text.setFixedHeight(120)
         status_layout.addWidget(self.log_text)
 
-    # UI helpers
+        # Show hero empty state by default.
+        self.show_empty_state()
+
+    # Page builders.
+
+    def _build_empty_page(self) -> QWidget:
+        """Build the hero style empty state page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 40, 0, 0)
+
+        center = QWidget()
+        center_layout = QVBoxLayout(center)
+        center_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+
+        icon_box = QWidget()
+        icon_box_layout = QVBoxLayout(icon_box)
+        icon_box_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_box.setStyleSheet(
+            "background-color: #020617; border-radius: 24px; border: 1px solid #1f2937;"
+        )
+        icon_label = QLabel("📁")
+        icon_label.setStyleSheet("font-size: 40px;")
+        icon_box_layout.addWidget(icon_label)
+
+        title = QLabel("No folders scanned yet")
+        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #e5e7eb;")
+        subtitle = QLabel(
+            "Click the Scan Folder button above to start scanning your video library."
+        )
+        subtitle.setStyleSheet("font-size: 11px; color: #9ca3af;")
+        subtitle.setWordWrap(True)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        center_layout.addWidget(icon_box)
+        center_layout.addSpacing(16)
+        center_layout.addWidget(title)
+        center_layout.addWidget(subtitle)
+
+        layout.addStretch()
+        layout.addWidget(center)
+        layout.addStretch()
+
+        return page
+
+    def _build_library_page(self) -> QWidget:
+        """Build the main library view with table, details, and options."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        # Middle area: files table and details.
+        middle_layout = QHBoxLayout()
+        layout.addLayout(middle_layout, 1)
+
+        files_group = QGroupBox("Files")
+        middle_layout.addWidget(files_group, 3)
+        files_layout = QVBoxLayout()
+        files_group.setLayout(files_layout)
+
+        self.files_table = QTableWidget()
+        self.files_table.setColumnCount(4)
+        self.files_table.setHorizontalHeaderLabels(["Name", "Type", "Status", "Audio"])
+        self.files_table.setSelectionBehavior(self.files_table.SelectionBehavior.SelectRows)
+        self.files_table.setSelectionMode(self.files_table.SelectionMode.SingleSelection)
+        self.files_table.cellClicked.connect(self.on_file_row_selected)
+
+        header = self.files_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionsMovable(True)
+        header.setHighlightSections(False)
+        self.restore_table_settings()
+        header.sectionResized.connect(self.on_column_resized)
+
+        files_layout.addWidget(self.files_table)
+
+        details_group = QGroupBox("Details")
+        middle_layout.addWidget(details_group, 2)
+        details_layout = QVBoxLayout()
+        details_group.setLayout(details_layout)
+
+        self.details_text = QTextEdit()
+        self.details_text.setReadOnly(True)
+        details_layout.addWidget(self.details_text)
+
+        self.subtitles_button = QPushButton("Show subtitles for selected file")
+        self.subtitles_button.clicked.connect(self.show_subtitles_clicked)
+        details_layout.addWidget(self.subtitles_button)
+
+        # Options section.
+        options_group = QGroupBox("Options")
+        layout.addWidget(options_group)
+        options_layout = QVBoxLayout()
+        options_group.setLayout(options_layout)
+
+        row1 = QHBoxLayout()
+        row2 = QHBoxLayout()
+
+        self.cb_dry_run = QCheckBox("Dry run only")
+        self.cb_same_dir = QCheckBox("Output next to source directory")
+        self.cb_same_dir.setChecked(config.SAME_DIR_OUTPUT)
+        self.cb_delete_original = QCheckBox("Delete original after conversion")
+        self.cb_delete_original.setChecked(config.DELETE_ORIGINAL_AFTER_CONVERT)
+
+        row1.addWidget(self.cb_dry_run)
+        row1.addWidget(self.cb_same_dir)
+        row1.addWidget(self.cb_delete_original)
+        row1.addStretch()
+
+        self.cb_high_4k = QCheckBox("High quality mode for 4K")
+        self.cb_high_4k.setChecked(getattr(config, "HIGH_QUALITY_FOR_4K", False))
+        self.cb_skip_audio = QCheckBox("Skip audio validation")
+        self.cb_no_discord = QCheckBox("Disable Discord for this run")
+
+        row2.addWidget(self.cb_high_4k)
+        row2.addWidget(self.cb_skip_audio)
+        row2.addWidget(self.cb_no_discord)
+        row2.addStretch()
+
+        options_layout.addLayout(row1)
+        options_layout.addLayout(row2)
+
+        return page
+
+    # State helpers.
+
+    def show_empty_state(self):
+        self.stack.setCurrentWidget(self.empty_page)
+        self.details_text = None
+        self.files_table = None
+
+    def show_library_view(self):
+        self.stack.setCurrentWidget(self.library_page)
+
+    # Logging and settings helpers.
 
     def log_message(self, message: str):
         """Append a line to the log panel and update status label."""
-        if not hasattr(self, "log_text"):
-            return
-        self.log_text.append(message)
-        self.status_label.setText(message)
+        if hasattr(self, "log_text") and self.log_text is not None:
+            self.log_text.append(message)
+        if hasattr(self, "status_label") and self.status_label is not None:
+            self.status_label.setText(message)
 
     def restore_table_settings(self):
         """Restore column widths from QSettings if present."""
@@ -373,7 +492,7 @@ class MediaConverterWindow(QMainWindow):
         widths = [header.sectionSize(i) for i in range(self.files_table.columnCount())]
         self.settings.setValue("files_table/column_widths", widths)
 
-    # Path selection
+    # Path selection.
 
     def browse_input(self):
         directory = QFileDialog.getExistingDirectory(
@@ -389,7 +508,19 @@ class MediaConverterWindow(QMainWindow):
         if directory:
             self.output_edit.setText(directory)
 
-    # Scanning and table population
+    def scan_from_header(self):
+        """Header button for Scan Folder, uses same logic as Scan."""
+        self.scan_files()
+
+    # Scanning and table population.
+
+    def ensure_library_widgets(self):
+        """
+        Ensure table and details widgets are available.
+        Needed because hero view is the initial page.
+        """
+        if self.stack.currentWidget() is not self.library_page:
+            self.stack.setCurrentWidget(self.library_page)
 
     def scan_files(self):
         input_dir = self.input_edit.text().strip()
@@ -411,13 +542,18 @@ class MediaConverterWindow(QMainWindow):
             self.log_message("Scan complete. Building file table...")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Scan failed: {e}")
+            self.log_message(f"Scan failed: {e}")
             return
+
+        # Switch to library view now that we have a plan.
+        self.ensure_library_widgets()
 
         self.files_table.setRowCount(0)
 
         for idx, item in enumerate(self.plan):
             path = Path(item["path"])
             ext = path.suffix.lower() or "unknown"
+            status = "convert" if item["needs_conversion"] else "skip"
             audio_summary = get_audio_summary(path)
 
             self.files_table.insertRow(idx)
@@ -429,11 +565,9 @@ class MediaConverterWindow(QMainWindow):
             audio_item = QTableWidgetItem(audio_summary)
 
             if item["needs_conversion"]:
-                # Blue tinted background for items that will be converted
                 status_item.setBackground(Qt.GlobalColor.darkBlue)
                 status_item.setForeground(Qt.GlobalColor.white)
             else:
-                # Dimmer look for items that will be skipped
                 status_item.setBackground(Qt.GlobalColor.darkGray)
                 status_item.setForeground(Qt.GlobalColor.white)
 
@@ -448,7 +582,6 @@ class MediaConverterWindow(QMainWindow):
         self.log_message(f"Scan complete. {total} files found.")
 
     def on_file_row_selected(self, row: int, column: int):
-        # When a row is clicked, show basic details.
         if not self.plan:
             return
         if row < 0 or row >= len(self.plan):
@@ -466,7 +599,7 @@ class MediaConverterWindow(QMainWindow):
         ]
         self.details_text.setPlainText("\n".join(lines))
 
-    # Subtitle viewing
+    # Subtitle viewing.
 
     def get_selected_plan_item(self) -> Optional[Dict[str, Any]]:
         if not self.plan:
@@ -509,7 +642,7 @@ class MediaConverterWindow(QMainWindow):
 
         self.details_text.setPlainText("\n".join(lines))
 
-    # Conversion
+    # Conversion.
 
     def run_conversion_clicked(self):
         input_dir = self.input_edit.text().strip()
@@ -518,10 +651,6 @@ class MediaConverterWindow(QMainWindow):
         if not input_dir:
             QMessageBox.critical(self, "Error", "Input directory is required.")
             return
-
-        self.log_message("Starting conversion run...")
-        # Use indeterminate progress while backend runs
-        self.progress_bar.setRange(0, 0)
 
         args = UIArgs(
             input_dir=input_dir,
@@ -538,6 +667,9 @@ class MediaConverterWindow(QMainWindow):
         worker = ConversionWorker(args)
         worker.finished.connect(self.on_conversion_finished)
         worker.error.connect(self.on_conversion_error)
+
+        self.progress_bar.setRange(0, 0)
+        self.log_message("Starting conversion run...")
 
         thread = threading.Thread(target=worker.run, daemon=True)
         thread.start()
@@ -560,12 +692,14 @@ class MediaConverterWindow(QMainWindow):
         self.log_message(f"Conversion failed: {message}")
         QMessageBox.critical(self, "Error", f"Conversion failed: {message}")
 
+    # Close handling.
 
     def closeEvent(self, event):
         """Ensure column widths are persisted on close."""
-        header = self.files_table.horizontalHeader()
-        widths = [header.sectionSize(i) for i in range(self.files_table.columnCount())]
-        self.settings.setValue("files_table/column_widths", widths)
+        if hasattr(self, "files_table") and self.files_table is not None:
+            header = self.files_table.horizontalHeader()
+            widths = [header.sectionSize(i) for i in range(self.files_table.columnCount())]
+            self.settings.setValue("files_table/column_widths", widths)
         super().closeEvent(event)
 
 
