@@ -36,7 +36,16 @@ def sanitize_output_name(input_path: Path) -> Path:
     # Use renamer.clean_name to apply all renaming rules
     cleaned_stem = clean_name(input_path)
 
-    return base_dir / f"{cleaned_stem}.mp4"
+    output_path = base_dir / f"{cleaned_stem}.mp4"
+
+    # --- CRITICAL BUG FIX ---
+    # Prevent overwriting the source file if names are identical.
+    # e.g., "Movie.mp4" in "SAME_DIR_OUTPUT" mode.
+    if output_path.resolve() == input_path.resolve():
+        output_path = base_dir / f"{cleaned_stem}_converted.mp4"
+    # --- END BUG FIX ---
+
+    return output_path
 
 
 def is_4k_video(input_path: Path) -> bool:
@@ -142,6 +151,9 @@ def convert_video(input_path: Path, index: int | None = None, total: int | None 
         log(f"Starting conversion: {input_path.name}")
 
     output_path = sanitize_output_name(input_path)
+
+    # Ensure the output directory exists, especially for SAME_DIR_OUTPUT
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     max_retries = getattr(config, "MAX_RETRIES", 0)
     validate_audio = getattr(config, "VALIDATE_AUDIO", True)

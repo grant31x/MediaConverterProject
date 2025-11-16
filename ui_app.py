@@ -337,10 +337,15 @@ class MediaConverterWindow(QMainWindow):
         paths_layout = QVBoxLayout()
         paths_group.setLayout(paths_layout)
 
+        # --- PATH MEMORY: Load saved paths ---
+        saved_input_dir = self.settings.value("paths/input", str(config.INPUT_DIR))
+        saved_output_dir = self.settings.value("paths/output", str(config.OUTPUT_DIR))
+        # --- End PATH MEMORY ---
+
         # Input row.
         input_row = QHBoxLayout()
         input_label = QLabel("Scan Directory")
-        self.input_edit = QLineEdit(str(config.INPUT_DIR))
+        self.input_edit = QLineEdit(saved_input_dir)
         input_browse = QPushButton("Browse")
         input_browse.clicked.connect(self.browse_input)
         input_row.addWidget(input_label)
@@ -351,7 +356,7 @@ class MediaConverterWindow(QMainWindow):
         # Output row.
         output_row = QHBoxLayout()
         output_label = QLabel("Destination Directory")
-        self.output_edit = QLineEdit(str(config.OUTPUT_DIR))
+        self.output_edit = QLineEdit(saved_output_dir)
         output_browse = QPushButton("Browse")
         output_browse.clicked.connect(self.browse_output)
         output_row.addWidget(output_label)
@@ -423,7 +428,8 @@ class MediaConverterWindow(QMainWindow):
         icon_box.setStyleSheet(
             "background-color: #0f172a; border-radius: 24px; border: 1px solid #334155;"
         )
-        icon_label = QLabel("📁")
+        # --- UI FIX: Replaced folder icon ---
+        icon_label = QLabel("🎞️") # Was "📁"
         icon_label.setStyleSheet("font-size: 40px;")
         icon_box_layout.addWidget(icon_label)
 
@@ -549,17 +555,21 @@ class MediaConverterWindow(QMainWindow):
 
     def browse_input(self):
         directory = QFileDialog.getExistingDirectory(
-            self, "Select input directory", str(config.INPUT_DIR)
+            self, "Select input directory", self.input_edit.text() # Use current text as start
         )
         if directory:
             self.input_edit.setText(directory)
+            # --- PATH MEMORY: Save selected path ---
+            self.settings.setValue("paths/input", directory)
 
     def browse_output(self):
         directory = QFileDialog.getExistingDirectory(
-            self, "Select output directory", str(config.OUTPUT_DIR)
+            self, "Select output directory", self.output_edit.text() # Use current text as start
         )
         if directory:
             self.output_edit.setText(directory)
+            # --- PATH MEMORY: Save selected path ---
+            self.settings.setValue("paths/output", directory)
 
     def scan_from_header(self):
         """Header button for Scan Folder, uses same logic as Scan."""
@@ -774,32 +784,39 @@ class MediaConverterWindow(QMainWindow):
         thread = threading.Thread(target=worker.run, daemon=True)
         thread.start()
 
-        QMessageBox.information(
-            self,
-            "Started",
-            "Conversion started in the background. Check terminal logs for progress.",
-        )
+        # --- UI FIX: Removed "Started" pop-up window ---
+        # The log message and progress bar are enough feedback.
+        # QMessageBox.information( ... )
 
     def on_conversion_finished(self, message: str):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
         self.log_message(message)
-        QMessageBox.information(self, "Done", message)
+        # --- UI FIX: Removed "Done" pop-up window ---
+        # QMessageBox.information(self, "Done", message)
 
     def on_conversion_error(self, message: str):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.log_message(f"Conversion failed: {message}")
-        QMessageBox.critical(self, "Error", f"Conversion failed: {message}")
+        # --- UI FIX: Removed "Error" pop-up window ---
+        # QMessageBox.critical(self, "Error", f"Conversion failed: {message}")
 
     # Close handling.
 
     def closeEvent(self, event):
-        """Ensure column widths are persisted on close."""
+        """Ensure column widths and paths are persisted on close."""
         if hasattr(self, "files_table") and self.files_table is not None:
             header = self.files_table.horizontalHeader()
             widths = [header.sectionSize(i) for i in range(self.files_table.columnCount())]
             self.settings.setValue("files_table/column_widths", widths)
+        
+        # --- PATH MEMORY: Save paths on exit ---
+        if hasattr(self, "input_edit"):
+            self.settings.setValue("paths/input", self.input_edit.text())
+        if hasattr(self, "output_edit"):
+            self.settings.setValue("paths/output", self.output_edit.text())
+            
         super().closeEvent(event)
 
 
